@@ -17,12 +17,6 @@ function generate_communities(chr_num, resolution, gamma, delta, a, num_samp)
     
     % Get community from original map
     template_matrix(kept_rows, kept_cols) = matrix_kr;
-    data = template_matrix;
-    % save("chr_" + chr_num + ".data.normKR.mat", "data");
-    fid = fopen("chr_" + chr_num + ".data.info", "w");
-    fprintf(fid, "%d %d %d", N, N, chr_num);
-    fclose(fid);
-    return
     B = heirarchical_domain_model_ana(template_matrix, gamma, a); % background heirarchical domain null model
     commun_exp = iterated_genlouvain(B, 10000, 0, 1, 1); % community search in experimental cmap
     template_matrix(:) = 0;

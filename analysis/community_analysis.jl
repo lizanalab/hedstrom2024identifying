@@ -13,11 +13,11 @@ using ProgressMeter
 # Returns:
 #   - counts: a vector where each entry represents the number of times a community is similar across the noise communities.
 function count_all_community_repeats(communities::Communities, similarity_cutoff::Float64, method=:ji)
-    if method ∉ [:ji, :overlap, :dice]
-        throw(ValueError(method, "not a defined method"))  # Throw an error if an unsupported method is passed.
+    if method ∉ [:ji, :overlap, :dice, :gamma, :AR]
+        throw(ValueError(method, "not a defined method"))
     end
 
-    # Initialize the vector to count similarities per community
+    # Returns a vector that gives the community stability per community. I.e. index is community number
     n_samps = length(communities.noise_comms)
     counts = zeros(length(unique(communities.orig_comm[communities.orig_comm .> 0])))  # Only consider non-zero communities.
     
@@ -42,20 +42,29 @@ function get_max_similarity_between_communities(orig_comm::Vector{Int}, noise_co
     used_comm_j = zeros(length(max_similarities))  # Track which noise communities are already assigned.
 
     # Loop through each unique original community and compare it to noise communities.
+    similarity = 0
     for comm_i in unique(orig_comm[orig_comm .> 0]) 
-        for comm_j in unique(noise_comm[orig_comm .== comm_i])  # Compare only relevant communities from noise_comm.
-            
             # Compute similarity based on the chosen method.
+        for comm_j in unique(noise_comm[orig_comm .== comm_i])
+            w11 = sum(orig_comm .== comm_i .&& noise_comm .== comm_j)
+            w10 = sum(orig_comm .== comm_i .&& noise_comm .!== comm_j)
+            w01 = sum(orig_comm .!== comm_i .&& noise_comm .== comm_j)
+            w00 = sum(orig_comm .!== comm_i .&& noise_comm .!== comm_j)
+            M = w11 + w01 + w10 + w00
             if method == :ji
-                similarity = sum(orig_comm .== comm_i .&& noise_comm .== comm_j) / sum(orig_comm .== comm_i .|| noise_comm .== comm_j)
+                # similarity = sum(orig_comm .== comm_i .&& noise_comm .== comm_j)/sum(orig_comm .== comm_i .|| noise_comm .== comm_j)
+                similarity = w11/(w10+w01+w11)
             elseif method == :overlap
-                similarity = sum(orig_comm .== comm_i .&& noise_comm .== comm_j) / min(sum(orig_comm .== comm_i), sum(noise_comm .== comm_j))
+                similarity = sum(orig_comm .== comm_i .&& noise_comm .== comm_j)/min(sum(orig_comm .== comm_i), sum(noise_comm .== comm_j))
             elseif method == :dice
-                similarity = 2 * sum(orig_comm .== comm_i .&& noise_comm .== comm_j) / (sum(orig_comm .== comm_i) + sum(noise_comm .== comm_j))
+                similarity = 2*sum(orig_comm .== comm_i .&& noise_comm .== comm_j)/(sum(orig_comm .== comm_i) + sum(noise_comm .== comm_j))
+            elseif method == :gamma
+                similarity = (M*w11 - (w11 + w10)*(w11 + w01))/(sqrt((w11 + w10)*(w11 + w01)*(M - (w11 + w10))*(M - (w11 + w01))))
+            elseif method == :AR
+                similarity = (w11 - 1/M*(w11 + w10)*(w11 + w01))/(0.5*((w11 + w10) + (w11 + w01)) - 1/M*(w11 + w10)*(w11 + w01))
             else
                 throw(ValueError(method, "not a defined method"))
             end
-
             # Update the max similarity if a better match is found and the community isn't used yet.
             if similarity > max_similarities[comm_i] && (comm_j ∉ used_comm_j)
                 max_similarities[comm_i] = similarity
@@ -74,11 +83,10 @@ end
 # Returns:
 #   - percentage_overlap: the average percentage overlap between community borders across all noise samples.
 function community_border_overlap(communities::Communities)
-    # Get the borders (transition points) from the original community assignments.
+    # Calculates the overlap (JI) between all community borders scaled by the number of borders compared to original border set
     borders_orig = find_community_borders(communities.orig_comm)
     n_samps = length(communities.noise_comms)  # Number of noise community samples.
     percentage_overlap = 0.0
-
     # Loop through pairs of noise community samples and compute border overlaps.
     for comm_i in 1:n_samps
         borders_i = find_community_borders(communities.noise_comms[comm_i])  # Borders in the current noise community.
@@ -87,10 +95,10 @@ function community_border_overlap(communities::Communities)
 
             # Calculate union and intersection of borders and the scaled overlap.
             border_union = length(union(borders_i, borders_j))
-            percentage_overlap += length(intersect(borders_i, borders_j)) / border_union * (1 - abs(length(borders_orig) - border_union) / border_union)
+            border_min = min(length(borders_i), length(borders_j))
+            percentage_overlap += length(intersect(borders_i, borders_j))/border_union * (1 - abs(border_min - length(borders_orig))/border_min)
         end
     end
-    
     # Normalize the overlap by the number of pairwise comparisons.
     percentage_overlap /= (n_samps * (n_samps - 1) / 2)
     return percentage_overlap
